@@ -1,0 +1,111 @@
+#!/usr/local/bin/php
+<?php
+/**
+ * Author: hellobravoo
+ * Date: 2018/6/22
+ * Time: 11:35
+ */
+
+$refname = $argv[0];
+$oldrev = $argv[2];
+$newrev = $argv[3];
+
+// Git Comment 检查
+//echo " oldrev: {$oldrev} newrev: {$newrev} ", PHP_EOL;
+exec("git rev-list {$oldrev}..{$newrev}", $revList);
+if ($revList) {
+    // 列出所有提交的的文件
+    echo "git push rev list: ", PHP_EOL;
+    foreach ($revList as $rev) {
+        echo $rev, PHP_EOL;
+    }
+    unset($rev);
+
+    // 检查
+    foreach ($revList as $rev) {
+        echo "getting comment (sha-1: {$rev}) ", PHP_EOL;
+        exec("git cat-file commit {$rev} | sed '1,/^$/d'", $message);
+        if (empty($message)) {
+            echo "no comments", PHP_EOL;
+            exit(1);
+        }
+        $message = trim($message[0]);
+        echo "verifying comment: {$message}", PHP_EOL;
+        $prefix = [
+            // 系统保留
+            'Merge branch',
+            // 项目组要求
+            'feat:',
+            'fix:',
+            'docs:',
+            'style:',
+            'refactor:',
+            'perf:',
+            'test:',
+            'chore:',
+            'revert:',
+        ];
+        $pass = false;
+        foreach ($prefix as $str) {
+            if (strpos($message, $str) === 0) {
+                $pass = true;
+            }
+        }
+        if (!$pass) {
+            echo "comment \" {$message}\" is not formatted correctly", PHP_EOL;
+            exit(1);
+        }
+    }
+}
+
+
+
+// PHP语法检查
+exec("git diff --name-status {$oldrev} {$newrev}", $diffs);
+if ($diffs) {
+    // 列出所有提交的的文件
+    echo "git push file list: ", PHP_EOL;
+    foreach ($diffs as $diff) {
+        echo $diff, PHP_EOL;
+    }
+    unset($diff);
+
+    // 检查
+    foreach ($diffs as $diff) {
+        $params = explode(chr(9), $diff);
+        $type = $params[0];
+        $file = $params[1];
+        if ($type !== 'D' && strpos($file, '.php') !== false) {
+            echo "checking syntax: {$file}", PHP_EOL;
+
+            // 将提交的文件写入临时文件中
+            $tmpFile = '/tmp/' . time() . rand(1000, 9999) . '.php';
+            exec("git show {$newrev}:{$file} 1>{$tmpFile}");
+
+            // 语法检测
+            if (file_exists($tmpFile)) {
+                $pass = true;
+                $msg = '';
+                exec("php -l $tmpFile", $results);
+                if ($results) {
+                    foreach ($results as $line) {
+                        if (!empty(trim($line))) {
+                            $msg .= str_replace($tmpFile, $file, $line) . PHP_EOL;
+                            if (strpos($line, 'Parse error') !== false) {
+                                $pass = false;
+                            }
+                        }
+                    }
+                }
+                unset($line, $results);
+                if (!$pass) {
+                    echo $msg;
+                    exit(1);
+                }
+
+                // 删除临时文件
+                @unlink($tmpFile);
+            }
+        }
+    }
+}
